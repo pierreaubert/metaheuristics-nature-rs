@@ -1,11 +1,12 @@
 //! Random number generator module.
 use alloc::vec::Vec;
 use rand::{
-    distributions::{
+    distr::{
         uniform::{SampleRange, SampleUniform},
-        Distribution, Standard,
+        Distribution, StandardUniform,
     },
-    Rng as _, SeedableRng as _,
+    seq::IndexedRandom as _,
+    RngExt as _, SeedableRng as _,
 };
 use rand_chacha::ChaCha8Rng as ChaCha;
 
@@ -59,7 +60,7 @@ impl Rng {
         let rng = match seed {
             SeedOpt::Seed(seed) => ChaCha::from_seed(seed),
             SeedOpt::U64(seed) => ChaCha::seed_from_u64(seed),
-            SeedOpt::Entropy => ChaCha::from_entropy(),
+            SeedOpt::Entropy => rand::make_rng(),
         };
         Self { rng }
     }
@@ -96,9 +97,9 @@ impl Rng {
     /// Generate a random value by standard distribution.
     pub fn gen<T>(&mut self) -> T
     where
-        Standard: Distribution<T>,
+        StandardUniform: Distribution<T>,
     {
-        self.rng.gen()
+        self.rng.random()
     }
 
     /// Generate a classic random value between `0..1` (exclusive range).
@@ -110,7 +111,7 @@ impl Rng {
     /// Generate a random boolean by positive (`true`) factor.
     #[inline]
     pub fn maybe(&mut self, p: f64) -> bool {
-        self.rng.gen_bool(p)
+        self.rng.random_bool(p)
     }
 
     /// Generate a random value by range.
@@ -120,7 +121,7 @@ impl Rng {
         T: SampleUniform,
         R: SampleRange<T>,
     {
-        self.rng.gen_range(range)
+        self.rng.random_range(range)
     }
 
     /// Sample from a distribution.
@@ -174,7 +175,7 @@ impl Rng {
     }
 
     /// Choose a random value from the slice.
-    pub fn choose<'a, S: rand::seq::SliceRandom + ?Sized>(&mut self, s: &'a S) -> &'a S::Item {
+    pub fn choose<'a, S: rand::seq::IndexedRandom + ?Sized>(&mut self, s: &'a S) -> &'a S::Output {
         s.choose(&mut self.rng).expect("Empty slice")
     }
 
@@ -187,5 +188,28 @@ impl Rng {
         let mut candi = candi.into_iter().collect::<Vec<_>>();
         self.shuffle(candi.as_mut_slice());
         candi[..N].try_into().expect("candi.len() < N")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Rng, SeedOpt};
+
+    #[test]
+    fn seeded_generators_replay_values_and_streams() {
+        let mut first = Rng::new(SeedOpt::U64(42));
+        let mut second = Rng::new(SeedOpt::U64(42));
+        assert_eq!(first.seed(), second.seed());
+        for _ in 0..128 {
+            assert_eq!(first.rand().to_bits(), second.rand().to_bits());
+            assert_eq!(first.range(0..1000), second.range(0..1000));
+        }
+        let first_streams = first.stream(4);
+        let second_streams = second.stream(4);
+        for (mut left, mut right) in first_streams.into_iter().zip(second_streams) {
+            for _ in 0..32 {
+                assert_eq!(left.rand().to_bits(), right.rand().to_bits());
+            }
+        }
     }
 }
